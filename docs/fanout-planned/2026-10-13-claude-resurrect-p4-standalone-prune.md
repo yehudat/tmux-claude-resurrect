@@ -81,7 +81,7 @@ Test (self-contained, no tmux): standard header (see Verified interfaces), sourc
 Code (`scripts/ledger.sh`, add after the constants block and before `ledger_upsert`; keep every pre-existing line unchanged):
 
 - Add `SECONDS_PER_DAY=86400` beside `TTL_DAYS_DEFAULT` only if absent.
-- `prune_keep()`: `local status=$1 row_server=$2 updated=$3 cur=$4 now=$5 ttl_days=$6`; `[[ "$status" == "$STATUS_HANDLED" ]] && return 1`; `[[ "$row_server" == "$cur" ]] && return 0`; `(( now - updated <= ttl_days * SECONDS_PER_DAY ))` as the last statement (rc 0 keep, rc 1 drop). One-line WHY comment on the `<=`: `# age == TTL is kept: spec says "older than"`.
+- `prune_keep()`: `local status=$1 row_server=$2 updated=$3 cur=$4 now=$5 ttl_days=$6`; `[[ "$status" == "$STATUS_HANDLED" ]] && return 1`; `[[ "$row_server" == "$cur" ]] && return 0`; `(( now - updated <= 10#$ttl_days * SECONDS_PER_DAY ))` as the last statement (`10#` forces base 10: a leading-zero ttl such as `08` is otherwise octal and errors) (rc 0 keep, rc 1 drop). One-line WHY comment on the `<=`: `# age == TTL is kept: spec says "older than"`.
 
 Testplan [scenario][range][check]:
 
@@ -92,6 +92,7 @@ Testplan [scenario][range][check]:
 5. [current-server live row older than TTL][live, `CUR_SERVER`, age `TTL_S * 2` (named `STALE_FACTOR=2`)][rc == `KEEP` (current-server rows are never aged out)]
 6. [ttl argument honoured][live, `DEAD_SERVER`, ttl `SHORT_TTL_DAYS`, ages `SECONDS_PER_DAY` and `SECONDS_PER_DAY + ONE_SECOND`][rc == `KEEP` then `DROP`]
 7. [clock skew][live, `DEAD_SERVER`, `updated = NOW_EPOCH + ONE_SECOND` (negative age)][rc == `KEEP`]
+8. [leading-zero ttl arg][live, `DEAD_SERVER`, ttl argument `08` (named `OCTAL_TTL_DAYS=08`), age `$((10#$OCTAL_TTL_DAYS * SECONDS_PER_DAY))` then that plus `ONE_SECOND`][rc == `KEEP` then `DROP` (no octal error)]
 
 Run RED (all fail, function missing), implement, GREEN. Then run the full suite (`bash tests/run.sh`); nothing else may change.
 
@@ -117,7 +118,7 @@ RED first: write `tests/integration/i15_prune.sh`, run the scoped test, confirm 
 
 Code (`scripts/ledger.sh`):
 
-- Add `ledger_ttl_days()`: `local v; v=$(tmux show-option -gqv @claude-resurrect-ttl-days 2>/dev/null) || v=""`; if `[[ "$v" =~ ^[0-9]+$ ]]` echo `"$v"`, else echo `"$TTL_DAYS_DEFAULT"`. Must return 0 and echo exactly one number when `tmux` is missing, no server is running, or the value is empty or non-numeric (unit tests such as U5 run without any server).
+- Add `ledger_ttl_days()`: `local v; v=$(tmux show-option -gqv @claude-resurrect-ttl-days 2>/dev/null) || v=""`; if `[[ "$v" =~ ^[0-9]+$ ]]` echo `"$((10#$v))"` (forces base 10, so `08` -> 8 and `010` -> 10, never octal), else echo `"$TTL_DAYS_DEFAULT"`. Must return 0 and echo exactly one number when `tmux` is missing, no server is running, or the value is empty or non-numeric (unit tests such as U5 run without any server).
 - In `ledger_upsert`: compute `ttl=$(ledger_ttl_days)` BEFORE taking the lock (keeps the lock short); inside the locked body, after the new row is appended and before `ledger_rewrite`, filter all rows: for each row `ledger_split` it, call `prune_keep "$R_STATUS" "$R_SERVER" "$R_UPDATED" "$server_start" "$updated" "$ttl"`, emit the row only on rc 0. The pass uses the `server_start` and `updated` arguments of the call (cur = its server_start, now = its updated). If the existing body streams rows through a pipeline, insert the filter as one more stage; do not change the argument list or the key-dedup behaviour.
 
 Test (self-contained, uses a real private tmux server):
@@ -132,7 +133,7 @@ Testplan [scenario][range][check]:
 1. [default TTL, option unset][`tmux set-option -gu $TTL_OPTION`; seed; `fire`][`sids` == `sid-cur-stale sid-mid sid-new sid-young` (handled rows, and the dead row older than `TTL_DAYS_DEFAULT` days, gone; current-server stale row kept)]
 2. [ttl option = 1 day][`tmux set-option -g $TTL_OPTION $SHORT_TTL_DAYS`; seed; `fire`][`sids` == `sid-cur-stale sid-new sid-young` (`sid-mid`, 2 days old, now dropped)]
 3. [non-numeric option falls back to default][`tmux set-option -g $TTL_OPTION abc`; seed; `fire`][`sids` identical to scenario 1]
-4. [`ledger_ttl_days` direct][option unset / `7` / empty string `''` / `abc` / `-3`][echoes `$TTL_DAYS_DEFAULT` / `7` / `$TTL_DAYS_DEFAULT` / `$TTL_DAYS_DEFAULT` / `$TTL_DAYS_DEFAULT`]
+4. [`ledger_ttl_days` direct][option unset / `7` / empty string `''` / `abc` / `-3` / `08` / `010`][echoes `$TTL_DAYS_DEFAULT` / `7` / `$TTL_DAYS_DEFAULT` / `$TTL_DAYS_DEFAULT` / `$TTL_DAYS_DEFAULT` / `8` / `10`]
 5. [no tmux binary][`EMPTY_DIR=$(mktemp -d)`; `out=$( PATH="$EMPTY_DIR"; ledger_ttl_days ); rc=$?` (subshell of the current shell, the function is already sourced, so no external bash is needed)][`$out` == `$TTL_DAYS_DEFAULT` and `rc` == 0]
 6. [surviving rows intact][scenario 1 final ledger][every surviving row passes `ledger_split` (rc 0), is 7-field, and `sid-young`'s row `R_UPDATED` is unchanged from its seeded value]
 7. [no regression for the same-sid / same-pane upsert][after scenario 1, `fire` again with `sid-new` from the same pane][exactly one `sid-new` row in `ledger_read` output]

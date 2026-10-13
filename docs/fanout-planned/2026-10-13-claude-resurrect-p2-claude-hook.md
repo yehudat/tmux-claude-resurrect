@@ -64,7 +64,7 @@ Locked decisions:
 Greenfield: `git ls-files` at planning = `GLOSSARY.md`, the spec, `docs/fanout-designed/`, `docs/fanout-planned/`. Anchors for P1 symbols are `PLAN:` lines (Discrepancy H); the executor verifies each against the real file first.
 
 - `scripts/ledger.sh` (P1, PLAN:208-220), sourced only, no main: `ledger_dir` (`${XDG_STATE_HOME:-$HOME/.local/state}/claude-resurrect`), `ledger_path`, `ledger_lock_path`, `ledger_log_path`, `ledger_log <msg>` (mkdir -p, appends `<epoch>\t<msg>`), `ledger_encode`/`ledger_decode`, `ledger_split <line>` (sets `R_SERVER R_PANE R_SID R_TITLE R_CWD R_UPDATED R_STATUS`; rc 1 on malformed), `ledger_read` (valid encoded rows, no lock; missing file -> empty, rc 0), `ledger_with_lock <fn> [args]` (logs `lock timeout`, non-zero on timeout), `ledger_rewrite`, `ledger_upsert <server_start> <pane_id> <sid> <title> <cwd> <updated>` (title/cwd already encoded; drops rows with same (server_start, pane_id) OR same sid, appends `status=live`; PLAN:217 says it takes the lock itself), `ledger_remove_sid <sid>`. Constants: `LOCK_WAIT_S=1`, `TTL_DAYS_DEFAULT=30`, `LEDGER_FIELDS=7`, `STATUS_LIVE=live`, `STATUS_HANDLED=handled`.
-- `tests/lib.sh` (P1, PLAN:228): `assert_eq`, `assert_contains`, `assert_file_absent`, `fail`, `mk_test_root` (temp root, exports `XDG_STATE_HOME`, `HOME`, `CR_TEST_SOCKET=crt-$$-$RANDOM`, installs the cleanup trap), `TIMING_SLACK_S`. P1 U1-U5 files `tests/unit/u01_row_codec.sh`..`u05_upsert_key.sh` call `mk_test_root` (PLAN:236-247).
+- `tests/lib.sh` (P1, PLAN:228): `assert_eq`, `assert_contains`, `assert_file_absent`, `fail`, `mk_test_root` (temp root, exports `XDG_STATE_HOME`, `HOME`, `CR_TEST_SOCKET=crt-$$-$RANDOM` (`docs/fanout-planned/2026-10-13-claude-resurrect-p1-ledger-core.md:122`), installs the cleanup trap), `TIMING_SLACK_S`. P1 U1-U5 files `tests/unit/u01_row_codec.sh`..`u05_upsert_key.sh` call `mk_test_root` (PLAN:236-247).
 - jq behaviour, verified with jq 1.7.1 on the planning host: `[.hook_event_name,.session_id,.cwd,(.session_title // ""),(.reason // "")] | @tsv` on `{"hook_event_name":"SessionEnd","session_id":"s1","cwd":"/a b","session_title":"x<TAB>y\z<CR>","reason":"logout"}` prints `SessionEnd<TAB>s1<TAB>/a b<TAB>x\ty\\z\r<TAB>logout`; absent keys print as empty fields; empty stdin prints nothing rc 0; `{bad` rc 5; valid non-object (`[]`) rc 5.
 - tmux 3.7c, verified: `tmux -L S -f /dev/null start-server \; set -g default-shell /bin/sh \; new-session -d -s crtest -x 200 -y 50` starts a server; `tmux -L S new-window -d -P -F '#{pane_id}' -t crtest:` prints `%1`; `display -p -t %1 '#{session_name}:#{window_index}.#{pane_index}'` prints `crtest:1.0`; `#{start_time}` is epoch seconds; on a dead socket `display` prints `no server running on ...` and exits 1.
 - bash 3.2 (`/bin/bash` 3.2.57): `printf -v "F_$i" '%s' "$v"` works; `${x%%$'\t'*}` works; `[[ $x =~ ^[0-9]+$ ]]` works.
@@ -81,7 +81,7 @@ Greenfield: `git ls-files` at planning = `GLOSSARY.md`, the spec, `docs/fanout-d
 - Modify: `tests/lib.sh`
 - Verify only (do not edit): `tests/unit/u01_row_codec.sh`, `tests/unit/u02_ledger_read.sh`, `tests/unit/u03_atomic_rewrite.sh`, `tests/unit/u04_lock.sh`, `tests/unit/u05_upsert_key.sh`
 
-**Scoped test:** the smoke script in the Testplan below, run as `bash -s` from the repo root (not committed), followed by `bash tests/run.sh u0` for the P1 unit tests.
+**Scoped test:** `bash "$(git rev-parse --path-format=absolute --git-common-dir)/fanout-p2/t1_smoke.sh" && bash tests/run.sh u0` from the repo root. The smoke script lives at that fixed out-of-tree path (never committed) so it can be re-run; write Testplan items 1-7 there as explicit `assert_eq`/`jq -e` lines, one per check.
 
 **Depends on:** none
 
@@ -102,7 +102,7 @@ RED first: the smoke script below is the test. Run it before writing anything an
 - `new_pane`: `_tt new-window -d -P -F '#{pane_id}' -t "$TEST_SESSION:"`; prints `%N`.
 - `hook_json <event> <sid> <cwd> [title] [reason]`: `jq -n -c --arg e ... --arg s ... --arg c ... --arg t ... --arg r ... --arg tf "$SESSION_TITLE_FIELD"` building `{hook_event_name:$e, session_id:$s}` plus `cwd` only when `$c != ""`, plus the key named by `$tf` only when `$t != ""`, plus `reason` only when `$r != ""`. Output is one JSON line. The `session_id` key is always present (even when `$s` is empty).
 - `test_server_stop`: `[ -n "${REAL_TMUX:-}" ] && [ -n "${CR_TEST_SOCKET:-}" ] && _tt kill-server 2>/dev/null; return 0`. It uses `-L`, so it can never touch the user's real tmux server.
-- Cleanup edit: P1's contract (PLAN:122) is an inline `trap 'rm -rf "$TEST_ROOT"' EXIT` inside `mk_test_root`. Change that line to exactly `trap 'test_server_stop; rm -rf "$TEST_ROOT"' EXIT`. Run `grep -n 'trap' tests/lib.sh` first; if the real file differs from the P1 contract (no such inline trap, or a function runs it), stop and report (Discrepancy H). P1 unit tests never start a server, so for them it is a no-op.
+- Cleanup edit: P1's contract (`docs/fanout-planned/2026-10-13-claude-resurrect-p1-ledger-core.md:122`) is an inline `trap 'rm -rf "$TEST_ROOT"' EXIT` inside `mk_test_root`. Change that line to exactly `trap 'test_server_stop; rm -rf "$TEST_ROOT"' EXIT`. Run `grep -n 'trap' tests/lib.sh` first; if the real file differs from the P1 contract (no such inline trap, or a function runs it), stop and report (Discrepancy H). P1 unit tests never start a server, so for them it is a no-op.
 
 Testplan [scenario][range][check]:
 
@@ -115,7 +115,7 @@ Testplan [scenario][range][check]:
 7. [server is stopped on exit][in a `bash -c` run `. tests/lib.sh; mk_test_root; start_test_server; echo "$CR_TEST_SOCKET"`, capture the socket name after it exits][`"$REAL_TMUX" -L "$sock" list-sessions` exits non-zero (server gone)]
 8. [P1 unaffected][`bash tests/run.sh u0`][exit 0, no `FAIL` line, PASS count equals the number of `tests/unit/u0[1-5]_*.sh` files]
 
-Smoke script skeleton (items 1-6; run `bash -s <<'EOF' ... EOF` from the repo root, `set -e`): `REPO=$PWD; . tests/lib.sh; unset TMUX TMUX_PANE; PATH="$REPO/tests/bin:$REPO/tests/stubs:$PATH"; mk_test_root; start_test_server; ...` then the assertions with `assert_eq`/`jq -e`. Item 7 runs as a separate `bash -c` after it.
+Smoke script skeleton (items 1-6; write it to `$(git rev-parse --path-format=absolute --git-common-dir)/fanout-p2/t1_smoke.sh` (create the dir), run from the repo root, `set -e`): `REPO=$PWD; . tests/lib.sh; unset TMUX TMUX_PANE; PATH="$REPO/tests/bin:$REPO/tests/stubs:$PATH"; mk_test_root; start_test_server; ...` then one explicit `assert_eq`/`jq -e` line per Testplan check (items 1-7). Item 7 runs as a separate `bash -c` after it.
 
 Run RED (smoke fails), implement, GREEN, then `bash tests/run.sh` (full suite stays green).
 
@@ -166,7 +166,7 @@ Testplan [scenario][range][check]:
 11. [split_tsv exact counts and empty fields][`split_tsv 3 "a<TAB>b<TAB>c"`; `split_tsv 3 "<TAB>b<TAB>"`; `split_tsv 5 "<TAB><TAB><TAB><TAB>"`; `split_tsv 1 "abc"`; `split_tsv 1 ""`][rc 0 each; fields `a,b,c`; `'',b,''`; five empty `F_1..F_5`; `F_1=abc`; `F_1=''`]
 12. [split_tsv wrong count][`split_tsv 3 "a<TAB>b"`; `split_tsv 2 "a<TAB>b<TAB>c"`; `split_tsv 2 "abc"`][rc 1 each]
 13. [split_tsv does not split on escaped TAB][`split_tsv 2 'a\tb<TAB>c'` (the first field contains backslash-t as two characters)][rc 0; `F_1` is the 4-char string `a\tb`; `F_2=c`]
-14. [source hygiene][`bash -n scripts/claude-hook.sh`; `grep -Eq '^[[:space:]]*set[[:space:]]+-[a-zA-Z]*[eu]' scripts/claude-hook.sh`; `test -x scripts/claude-hook.sh`; last non-blank line of the file][`bash -n` rc 0; grep finds nothing (rc 1); executable; last non-blank line is `fi` and the 2 lines before it include `exit 0`]
+14. [source hygiene][`bash -n scripts/claude-hook.sh`; `grep -Eq '^[[:space:]]*set[[:space:]]+-[a-zA-Z]*[eu]' scripts/claude-hook.sh`; `test -x scripts/claude-hook.sh`; last non-blank line of the file, compared to the exact guard line][`bash -n` rc 0; grep finds nothing (rc 1); executable; `[ "$(grep -v '^[[:space:]]*$' scripts/claude-hook.sh | tail -1)" = 'if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then main "$@"; exit 0; fi' ]` succeeds (the guard is exactly this one line and is the last non-blank line)]
 
 Run RED, implement, GREEN, then the full suite.
 
@@ -217,7 +217,7 @@ Run RED, implement, GREEN, then the full suite.
 
 **What:**
 
-Prerequisite state (from T1-T3, restated): `tests/lib.sh` provides `start_test_server` (private `-L $CR_TEST_SOCKET` server, session `crtest`, default shell `/bin/sh`), `new_pane` (prints `%N`), `hook_json <event> <sid> <cwd> [title] [reason]`, `mk_test_root`, `assert_eq`, `assert_contains`, `assert_file_absent`, `fail`, `TIMING_SLACK_S`; `tests/bin/tmux` is the `-L` shim. `scripts/ledger.sh` provides `ledger_upsert`, `ledger_read`, `ledger_split`, `ledger_encode`, `ledger_path`, `ledger_dir`, `ledger_lock_path`, `ledger_log_path`, `LOCK_WAIT_S`, `STATUS_LIVE`. `scripts/claude-hook.sh` has `hook_parse` (sets `H_EVENT H_SID H_CWD H_TITLE H_REASON`, already codec-encoded), `clear_predicate`, and `main` that parses and exits 0 without dispatching.
+Prerequisite state (from T1-T3, restated): `tests/lib.sh` provides `start_test_server` (private `-L $CR_TEST_SOCKET` server, session `crtest`, default shell `/bin/sh`), `new_pane` (prints `%N`), `hook_json <event> <sid> <cwd> [title] [reason]`, `mk_test_root`, `assert_eq`, `assert_contains`, `assert_file_absent`, `fail`, `wait_for_file`, `TIMING_SLACK_S`; `tests/bin/tmux` is the `-L` shim. `scripts/ledger.sh` provides `ledger_upsert`, `ledger_read`, `ledger_split`, `ledger_encode`, `ledger_path`, `ledger_dir`, `ledger_lock_path`, `ledger_log_path`, `LOCK_WAIT_S`, `STATUS_LIVE`. `scripts/claude-hook.sh` has `hook_parse` (sets `H_EVENT H_SID H_CWD H_TITLE H_REASON`, already codec-encoded), `clear_predicate`, and `main` that parses and exits 0 without dispatching.
 
 Step 0: confirm `grep -n 'ledger_with_lock' scripts/ledger.sh` shows it used inside `ledger_upsert` (PLAN:217). If not, that is a P1 defect: stop and report; do not add a lock wrapper in `claude-hook.sh`.
 
@@ -235,7 +235,7 @@ Test details (all self-contained):
 - i02: constants for sids `sid-a-old`, `sid-a-new`, `sid-x`, `sid-b`, `sid-dead`, `DEAD_SERVER=1`. Case /clear: pane A has row `sid-a-old` (via the hook), then the hook for pane A with `sid-a-new`. Case /resume: pane B hook with `sid-b`; pane C hook with `sid-x`; then pane B hook with `sid-x` (resume of X into B). Case dead-server row: `ledger_upsert "$DEAD_SERVER" "$paneA" sid-dead "" /old "$(date +%s)"` (fresh `updated`, so it survives P4 prune; assert `[[ "$DEAD_SERVER" != "$(tmux display -p '#{start_time}')" ]]` first), then the hook for pane A.
 - i03: constants `ABSENT_SOCKET="crt-absent-$$"`. Cases listed in the Testplan. "Unchanged" means `cmp -s` against a pre-copied file.
 - i06: constant `PARALLEL_WRITES=8`. Create that many panes; start all hooks as background jobs (`&`) with distinct sids `sid-p<k>`, collect each pid, `wait "$pid"` and record each rc.
-- i07: constants `HOLD_OVER_S=1`, `HOLD_S=$((LOCK_WAIT_S + TIMING_SLACK_S + HOLD_OVER_S))`, `READY_TRIES=50`, `READY_POLL_S=0.1`. `mkdir -p "$(ledger_dir)"`; holder = `( flock 9; : > "$ready"; sleep "$HOLD_S" ) 9>"$(ledger_lock_path)" &` with `ready=$XDG_STATE_HOME/ready`; poll for `$ready` up to `READY_TRIES` times (fail the test if it never appears). Elapsed via `date +%s` before/after.
+- i07: constants `HOLD_OVER_S=1`, `HOLD_S=$((LOCK_WAIT_S + TIMING_SLACK_S + HOLD_OVER_S))`. `mkdir -p "$(ledger_dir)"`; holder = `( flock 9; : > "$ready"; sleep "$HOLD_S" ) 9>"$(ledger_lock_path)" &` with `ready=$XDG_STATE_HOME/ready`; then `wait_for_file "$ready"` (P1 helper; it fails the test if the file never appears). Elapsed via `date +%s` before/after.
 
 Testplan [scenario][range][check]:
 
@@ -246,7 +246,7 @@ Testplan [scenario][range][check]:
 5. [I3 TMUX_PANE unset (spec:115)][pre-seeded ledger copied aside; `printf '%s' "$json" | "$REPO/scripts/claude-hook.sh"` with `TMUX_PANE` unset; also `TMUX_PANE=""`][rc 0 both; `cmp -s` ledger vs copy succeeds; `$(ledger_log_path)` absent]
 6. [I3 TMUX_PANE unset and no ledger][fresh root][rc 0; `$(ledger_path)` absent; `$(ledger_log_path)` absent]
 7. [I3 tmux unreachable (Discrepancy F)][`TMUX_PANE=%0 CR_TEST_SOCKET=$ABSENT_SOCKET` for the hook only, ledger pre-seeded][rc 0; ledger `cmp -s` identical; `$(ledger_log_path)` contains `hook_write: no server_start for pane %0`]
-8. [I6 parallel WRITEs (spec:238)][8 hooks in parallel on 8 distinct panes][all 8 rc 0; `wc -l < "$(ledger_path)"` equals `PARALLEL_WRITES`; `ledger_read | wc -l` equals `PARALLEL_WRITES` (no malformed row); every row passes `ledger_split`; 8 distinct `R_SID` and 8 distinct `R_PANE`; `$(ledger_log_path)` absent; `compgen -G "$(ledger_dir)/ledger.tsv.*"` finds no temp file]
+8. [I6 parallel WRITEs (spec:238)][8 hooks in parallel on 8 distinct panes][all 8 rc 0; `$(( $(wc -l < "$(ledger_path)") ))` equals `PARALLEL_WRITES`; `ledger_read | wc -l | tr -d ' '` equals `PARALLEL_WRITES` (no malformed row); every row passes `ledger_split`; 8 distinct `R_SID` and 8 distinct `R_PANE`; `$(ledger_log_path)` absent; `compgen -G "$(ledger_dir)/ledger.tsv.*"` finds no temp file]
 9. [I7 lock held over LOCK_WAIT_S (spec:239)][holder as above; hook for pane P with `sid-l`][hook rc 0; elapsed `<= LOCK_WAIT_S + TIMING_SLACK_S`; `$(ledger_log_path)` contains `lock timeout`; no row with `R_SID == sid-l` (`$(ledger_path)` absent or has none)]
 10. [I7 recovers after the lock is released][`wait` the holder, then run the same hook again][rc 0; exactly one row with `R_SID == sid-l`]
 
@@ -269,7 +269,7 @@ Run RED, implement, GREEN, then the full suite.
 
 **What:**
 
-Prerequisite state (from T1-T4, restated): `scripts/claude-hook.sh` has `hook_parse`, `clear_predicate <reason>` (rc 0 iff `prompt_input_exit` or `logout`), `hook_write`, and `main` that dispatches `SessionStart` only; it ends with the executed-only guard. `scripts/ledger.sh` has `ledger_remove_sid <sid>` (drops the row with that sid under the lock; logs `lock timeout` and returns non-zero if the lock is not acquired within `LOCK_WAIT_S`), `ledger_upsert`, `ledger_read`, `ledger_split`, `ledger_path`, `ledger_dir`, `ledger_lock_path`, `ledger_log_path`. `tests/lib.sh` has `start_test_server`, `new_pane`, `hook_json`, `mk_test_root`, `assert_eq`, `TIMING_SLACK_S`; `LOCK_WAIT_S` comes from `ledger.sh`. Test-file shape and hook idiom per Design recap.
+Prerequisite state (from T1-T4, restated): `scripts/claude-hook.sh` has `hook_parse`, `clear_predicate <reason>` (rc 0 iff `prompt_input_exit` or `logout`), `hook_write`, and `main` that dispatches `SessionStart` only; it ends with the executed-only guard. `scripts/ledger.sh` has `ledger_remove_sid <sid>` (drops the row with that sid under the lock; logs `lock timeout` and returns non-zero if the lock is not acquired within `LOCK_WAIT_S`), `ledger_upsert`, `ledger_read`, `ledger_split`, `ledger_path`, `ledger_dir`, `ledger_lock_path`, `ledger_log_path`. `tests/lib.sh` has `start_test_server`, `new_pane`, `hook_json`, `mk_test_root`, `assert_eq`, `wait_for_file`, `TIMING_SLACK_S`; `LOCK_WAIT_S` comes from `ledger.sh`. Test-file shape and hook idiom per Design recap.
 
 Step 0: `grep -n 'ledger_with_lock' scripts/ledger.sh` must show it inside `ledger_remove_sid` (PLAN:218, :215). If not, stop and report (P1 defect).
 
@@ -279,7 +279,7 @@ Add to `scripts/claude-hook.sh`, above `main`: `hook_clear() { clear_predicate "
 
 Test details:
 
-- i04 constants: `CLEAR_REASONS="prompt_input_exit logout"`, `HOLD_OVER_S=1`, `HOLD_S=$((LOCK_WAIT_S + TIMING_SLACK_S + HOLD_OVER_S))`, `READY_TRIES=50`, `READY_POLL_S=0.1`. Seed three rows through the hook (`SessionStart` on three panes, sids `sid-a`, `sid-b`, `sid-c`, plus a fourth `sid-ab` on a fourth pane for the exact-match case). The lock holder idiom is the same as T4's i07 (copy it into the file): `( flock 9; : > "$ready"; sleep "$HOLD_S" ) 9>"$(ledger_lock_path)" &`, poll `$ready`.
+- i04 constants: `CLEAR_REASONS="prompt_input_exit logout"`, `HOLD_OVER_S=1`, `HOLD_S=$((LOCK_WAIT_S + TIMING_SLACK_S + HOLD_OVER_S))`. Seed three rows through the hook (`SessionStart` on three panes, sids `sid-a`, `sid-b`, `sid-c`, plus a fourth `sid-ab` on a fourth pane for the exact-match case). The lock holder idiom is the same as T4's i07 (copy it into the file): `( flock 9; : > "$ready"; sleep "$HOLD_S" ) 9>"$(ledger_lock_path)" &`, then `wait_for_file "$ready"`.
 - i05 constants: `KEEP_REASONS="other clear resume bypass_permissions_disabled unknown_reason"`, `OTHER_EVENTS="Notification PreToolUse Stop"`. Seed two rows; snapshot with `cp "$(ledger_path)" "$snap"`; identity check is `cmp -s "$(ledger_path)" "$snap"`.
 
 Testplan [scenario][range][check]:
@@ -288,7 +288,7 @@ Testplan [scenario][range][check]:
 2. [I4 CLEAR needs no TMUX_PANE][same as 1 but run once with `TMUX_PANE=<some live pane>` set and once unset][both remove the row; rc 0]
 3. [I4 exact sid match][seed `sid-ab` and `sid-a`; CLEAR `sid-a`][`sid-ab` row still present, `sid-a` gone]
 4. [I4 unknown sid][CLEAR `sid-none` with `logout`][rc 0; ledger `cmp -s` identical to the pre-image]
-5. [I4 no ledger at all][fresh root, `SessionEnd logout sid-x`][rc 0; `ledger_read | wc -l` equals 0]
+5. [I4 no ledger at all][fresh root, `SessionEnd logout sid-x`][rc 0; `ledger_read | wc -l | tr -d ' '` equals 0]
 6. [I4 lock timeout skips the CLEAR (spec:183-184)][seed `sid-a`; holder holds the lock; CLEAR `sid-a` with `logout`][rc 0; elapsed `<= LOCK_WAIT_S + TIMING_SLACK_S`; the `sid-a` row is still present; `$(ledger_log_path)` contains `lock timeout`]
 7. [I5 no CLEAR for other reasons (spec:126-127)][each reason in `KEEP_REASONS`, plus a `SessionEnd` with no `reason` key (`hook_json SessionEnd sid-a /w`)][rc 0; ledger `cmp -s` identical to the snapshot for every case]
 8. [I5 other events are no-ops (spec: any other event)][each event in `OTHER_EVENTS` via `hook_json "$ev" sid-a /w "" logout`][rc 0; ledger `cmp -s` identical; `$(ledger_log_path)` absent]
@@ -368,6 +368,6 @@ Manual post-step (not an implementation task): run `/bin/bash tests/run.sh` on m
 
 **Placeholder scan.** No TBD/TODO. Every task names exact files, constants, messages and expected values; the log messages (`hook_parse: ...`, `hook_write: no server_start for pane`, `lock timeout`) are defined once in the task that introduces them and asserted verbatim.
 
-**Consistency.** Names used across tasks: `hook_parse`, `H_EVENT H_SID H_CWD H_TITLE H_REASON`, `split_tsv`, `F_1..F_n`, `clear_predicate`, `hook_write`, `hook_clear`, `hook_json`, `start_test_server`, `new_pane`, `test_server_stop`, `SESSION_TITLE_FIELD`, `TEST_SESSION`, `REAL_TMUX`, `HOLD_S`, `READY_TRIES`. `claude-hook.sh` is edited by T2, T3, T4, T5 in that order only (strictly serial, one owner per task).
+**Consistency.** Names used across tasks: `hook_parse`, `H_EVENT H_SID H_CWD H_TITLE H_REASON`, `split_tsv`, `F_1..F_n`, `clear_predicate`, `hook_write`, `hook_clear`, `hook_json`, `start_test_server`, `new_pane`, `test_server_stop`, `SESSION_TITLE_FIELD`, `TEST_SESSION`, `REAL_TMUX`, `HOLD_S`, `wait_for_file`. `claude-hook.sh` is edited by T2, T3, T4, T5 in that order only (strictly serial, one owner per task).
 
 **Ordering.** Edges: T1 -> T2 -> T3 -> T4 -> T5; T6 independent. Parallel groups: {T1 -> T2 -> T3 -> T4 -> T5} and {T6}; file sets are disjoint across the two groups. The serial chain exists because T2-T5 all edit `scripts/claude-hook.sh`.
