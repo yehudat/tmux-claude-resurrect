@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+coords=
+if [[ -n ${TMUX_PANE:-} ]]; then
+  coords=$(tmux display -p -t "$TMUX_PANE" $'#{session_name}:#{window_index}.#{pane_index}')
+fi
+printf '%s\t%s\t%s\n' "$PWD" "$*" "$coords" >>"$CLAUDE_STUB_LOG"
+exit 0

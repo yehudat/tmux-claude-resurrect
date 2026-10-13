@@ -1,3 +1,9 @@
+: "${REAL_TMUX:=$(command -v tmux)}"
+export REAL_TMUX
+
+TEST_SESSION=crtest
+SESSION_TITLE_FIELD=session_title
+
 # date +%s has 1 s granularity, so elapsed readings can overshoot by 1 s
 TIMING_SLACK_S=2
 WAIT_POLL_S=0.05
@@ -25,7 +31,7 @@ mk_test_root() {
   mkdir -p "$TEST_ROOT/home"
   export HOME="$TEST_ROOT/home" XDG_STATE_HOME="$TEST_ROOT/state"
   export CR_TEST_SOCKET="crt-$$-$RANDOM"
-  trap 'rm -rf "$TEST_ROOT"' EXIT
+  trap 'test_server_stop; rm -rf "$TEST_ROOT"' EXIT
 }
 
 wait_for_file() {
@@ -35,4 +41,31 @@ wait_for_file() {
     sleep "$WAIT_POLL_S"
   done
   fail "wait_for_file: $1 never appeared"
+}
+
+_tt() { "$REAL_TMUX" -L "$CR_TEST_SOCKET" "$@"; }
+
+start_test_server() {
+  [[ -n ${REAL_TMUX:-} ]] || { echo "start_test_server: tmux not found" >&2; return 1; }
+  # panes use sh so no user rc files run
+  _tt -f /dev/null start-server \; set -g default-shell /bin/sh \; \
+    new-session -d -s "$TEST_SESSION" -x 200 -y 50
+}
+
+new_pane() {
+  _tt new-window -d -P -F '#{pane_id}' -t "$TEST_SESSION:"
+}
+
+hook_json() {
+  jq -n -c --arg e "$1" --arg s "$2" --arg c "${3:-}" --arg t "${4:-}" \
+    --arg r "${5:-}" --arg tf "$SESSION_TITLE_FIELD" \
+    '{hook_event_name: $e, session_id: $s}
+     + (if $c != "" then {cwd: $c} else {} end)
+     + (if $t != "" then {($tf): $t} else {} end)
+     + (if $r != "" then {reason: $r} else {} end)'
+}
+
+test_server_stop() {
+  [ -n "${REAL_TMUX:-}" ] && [ -n "${CR_TEST_SOCKET:-}" ] && _tt kill-server 2>/dev/null
+  return 0
 }
