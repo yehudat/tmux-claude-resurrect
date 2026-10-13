@@ -128,6 +128,7 @@ CROSS-PHASE LOCKED FORMATS:
 PORTABILITY:
 - Bash 3.2 compatible, because macOS /bin/bash is 3.2. That rules out {fd} redirection, mapfile, associative arrays and ${v,,}.
 - POSIX single-quote quoting (' -> '\'') for any string typed into a pane, not printf %q, so U11 passes through sh/dash.
+- `sh_quote` (that quoting) has one definition site: scripts/ledger.sh. Others source it.
 - Date: `date -d @E +%F 2>/dev/null || date -r E +%F`.
 - Shebang: #!/usr/bin/env bash. All scripts are chmod +x.
 
@@ -624,6 +625,7 @@ commonContext: |
   PORTABILITY:
   - Bash 3.2 compatible, because macOS /bin/bash is 3.2. That rules out {fd} redirection, mapfile, associative arrays and ${v,,}.
   - POSIX single-quote quoting (' -> '\'') for any string typed into a pane, not printf %q, so U11 passes through sh/dash.
+  - `sh_quote` (that quoting) has one definition site: scripts/ledger.sh. Others source it.
   - Date: `date -d @E +%F 2>/dev/null || date -r E +%F`.
   - Shebang: #!/usr/bin/env bash. All scripts are chmod +x.
 

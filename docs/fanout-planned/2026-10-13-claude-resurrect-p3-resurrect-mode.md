@@ -123,6 +123,7 @@ Run RED (the file fails with command not found), implement, GREEN, then the full
 
 **Files:**
 - Create: `scripts/restore.sh`
+- Modify: `scripts/ledger.sh`
 - Create: `tests/unit/u08_shell_predicate.sh`
 - Create: `tests/unit/u11_resume_cmd.sh`
 
@@ -134,13 +135,14 @@ Run RED (the file fails with command not found), implement, GREEN, then the full
 
 RED first: create both tests, run the scoped test, confirm both FAIL (`scripts/restore.sh` missing, so sourcing fails), then create `scripts/restore.sh` until both are green. Run the full suite last.
 
+Add `sh_quote <s>` to `scripts/ledger.sh` (its single definition site; later phases source `ledger.sh` for it): echoes `'` + `s` with every `'` replaced by `'\''` + `'` (POSIX single-quote escaping, not `printf %q`; empty string -> `''`). U11 exercises it through `resume_cmd`.
+
 Create `scripts/restore.sh` (`chmod +x`) containing ONLY the preamble and these pure functions; T4 adds `resurrect_dir`, `main` and the `[[ ... ]] && main` guard line, T6 adds the guard functions:
 
 - Preamble: `#!/usr/bin/env bash`, `CURRENT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"`, `source "$CURRENT_DIR/ledger.sh"`. No `set -e`/`set -u`. No code runs at source time.
 - `LOGIN_SHELL_PREFIX=-` (named constant; one WHY comment: tmux reports login shells as `-zsh`).
 - `is_shell <cmd>`: strip exactly one leading `$LOGIN_SHELL_PREFIX`, then `case` on `zsh|bash|sh|fish` (exact match); return 0 on match, 1 otherwise. Does NOT match `dash` (Discrepancy C).
-- `sh_quote <s>`: echoes `'` + `s` with every `'` replaced by `'\''` + `'` (POSIX single-quote escaping, not `printf %q`).
-- `resume_cmd <cwd_dec> <sid>`: echoes `cd <sh_quote cwd> && claude --resume <sh_quote sid>`; with an empty cwd echoes only `claude --resume <sh_quote sid>`.
+- `resume_cmd <cwd_dec> <sid>`: echoes `cd <sh_quote cwd> && claude --resume <sh_quote sid>` (`sh_quote` from `ledger.sh`); with an empty cwd echoes only `claude --resume <sh_quote sid>`.
 
 Test `u08_shell_predicate.sh` (self-contained): `. "$REPO/tests/lib.sh"`, `mk_test_root`, `. "$REPO/scripts/restore.sh"`. Test `u11_resume_cmd.sh` (self-contained): additionally `export PATH="$REPO/tests/stubs:$PATH"`, `export CLAUDE_STUB_LOG="$HOME/claude-stub.log"`, creates one directory under `$HOME/cwds/` per cwd case and runs each command as `(cd "$HOME/cwds" && sh -c "$cmd")` (relative cwd names, so literal `~` and `$HOME` names are directories, not expansions). `u11_resume_cmd.sh` does not use the environment recipe, so run `unset TMUX TMUX_PANE` right after `. "$REPO/tests/lib.sh"` (do not prefix `TMUX_PANE=`; `u08_shell_predicate.sh` may do the same), so the stub logs empty coords even when the suite runs inside the user's tmux. UUID constant `SID=0c3f8a52-6d1e-4b7a-9a2d-5e4f1b2c3d4e`. Log checks are byte comparisons of the log delta, never line counts (a cwd containing LF spreads one entry over two log lines): helper `run_case <name> <sid>` records `size=$(( $(wc -c < "$CLAUDE_STUB_LOG") ))`, runs the command, then `tail -c +$((size+1)) "$CLAUDE_STUB_LOG" > delta`. Expected bytes are built independently with `printf '%s\t%s\t\n' "$abs" "--resume $SID" > expected` (the final `\t` is the empty coords field, `\n` the stub's newline) and compared with `cmp -s delta expected` (rc 0).
 
@@ -286,7 +288,7 @@ Run RED, implement, GREEN, then the full suite.
 
 **What:**
 
-Prerequisite state (restated): `scripts/restore.sh` (chmod +x) has the preamble, `is_shell <cmd>` (rc 0 for `zsh|bash|sh|fish` after stripping one leading `-`), `sh_quote`, `resume_cmd <cwd_dec> <sid>`, `resurrect_dir`, `restore_entry` (reads `C_*`, builds coords `"$(ledger_decode "$C_SESSION"):$C_WINDOW.$C_PANE"`, sends the resume command with `send-keys -l` then `Enter`, currently UNCONDITIONALLY), `main` (reads `$(resurrect_dir)/last`, calls `claude_line_split` then `restore_entry` per line) and the trailing `[[ ... ]] && main "$@"` guard. `ledger.sh` has `ledger_read`, `ledger_split` (`R_SID R_SERVER R_STATUS`), `STATUS_LIVE`. `tests/lib.sh` has `wait_for_lines <file> <n>`, `settle`, `POLL_TIMEOUT_S`, `POLL_INTERVAL_S`, `SETTLE_S`.
+Prerequisite state (restated): `scripts/restore.sh` (chmod +x) has the preamble, `is_shell <cmd>` (rc 0 for `zsh|bash|sh|fish` after stripping one leading `-`), `resume_cmd <cwd_dec> <sid>` (uses `ledger.sh`'s `sh_quote`), `resurrect_dir`, `restore_entry` (reads `C_*`, builds coords `"$(ledger_decode "$C_SESSION"):$C_WINDOW.$C_PANE"`, sends the resume command with `send-keys -l` then `Enter`, currently UNCONDITIONALLY), `main` (reads `$(resurrect_dir)/last`, calls `claude_line_split` then `restore_entry` per line) and the trailing `[[ ... ]] && main "$@"` guard. `ledger.sh` has `ledger_read`, `ledger_split` (`R_SID R_SERVER R_STATUS`), `STATUS_LIVE`. `tests/lib.sh` has `wait_for_lines <file> <n>`, `settle`, `POLL_TIMEOUT_S`, `POLL_INTERVAL_S`, `SETTLE_S`.
 
 RED first: add the lib helpers, create the test, run the scoped test, confirm it FAILS (the unguarded restore also types into the claude pane, the live-sid pane and the missing coords, so the stub log has too many entries / the claude-pane check fails), then add the guard until green.
 
@@ -357,6 +359,6 @@ Run the scoped test GREEN, perform and record the two mutation REDs, then the fu
 
 **Placeholder scan.** No TBD or "similar to Task N". T6 item 5 writes its handled-only row with `printf` in test setup because the mark-handled API arrives in P4.
 
-**Consistency.** Names used across tasks: `claude_line_format`, `claude_line_split`, `C_SESSION..C_CWD`, `CLAUDE_LINE_FIELDS`, `is_shell`, `sh_quote`, `resume_cmd`, `pane_coords`, `resurrect_dir`, `restore_entry`, `guard_passes`, `sid_live_in_server`, `wait_for_lines`, `settle`, `wait_pane_cmd`, `mk_sleep_claude_dir`.
+**Consistency.** Names used across tasks: `claude_line_format`, `claude_line_split`, `C_SESSION..C_CWD`, `CLAUDE_LINE_FIELDS`, `is_shell`, `sh_quote` (defined only in `ledger.sh`), `resume_cmd`, `pane_coords`, `resurrect_dir`, `restore_entry`, `guard_passes`, `sid_live_in_server`, `wait_for_lines`, `settle`, `wait_pane_cmd`, `mk_sleep_claude_dir`.
 
 **Ordering.** Parallel group 1: {T1}, {T2}, {T3} (disjoint files). Group 2: {T4 after T1+T2}, {T5 after T1+T3} (disjoint files). Then T6 after T4, then T7 after T6. `scripts/ledger.sh` is edited only by T1; `scripts/restore.sh` by T2, T4, T6 (chain); `scripts/save.sh` by T3, T5 (chain); `tests/lib.sh` by T4, T6 (chain).

@@ -34,8 +34,8 @@ The orchestrator's locked decisions are authoritative; nothing below changes the
 **Discrepancy C (locked wording vs macOS):** locked decision 3 says "`wc -l` == 0". BSD `wc -l` pads its output (`       0`, observed on this Mac), so a string compare would never match. Implementation compares numerically: `[ "$n" -eq 0 ]`.
 
 **Discrepancy D (shared-variable collisions, resolved in structure):** locked says the `.tmux` sources `scripts/ledger.sh`. Three further facts force structure the locked text does not mention:
-- `sh_quote` is needed by both `hook-wrapper.sh` (quote argv) and the `.tmux` (quote the wrapper path). It is defined once, in `hook-wrapper.sh`, and the `.tmux` sources `hook-wrapper.sh` at its top (guarded main keeps it inert).
-- Every script defines `main` and sets `CURRENT_DIR` (seam 2). The `.tmux` therefore uses its own variable `PLUGIN_DIR` (never `CURRENT_DIR`) and defines its `main` after the `source` lines, so its `main` wins over the wrapper's.
+- `sh_quote` is needed by both `hook-wrapper.sh` (quote argv) and the `.tmux` (quote the wrapper path). It is defined once, in `scripts/ledger.sh` (P3); both source `ledger.sh`. The `.tmux` never sources `hook-wrapper.sh` (it only needs the wrapper's path).
+- Every script defines `main` and sets `CURRENT_DIR` (seam 2). The `.tmux` therefore uses its own variable `PLUGIN_DIR` (never `CURRENT_DIR`).
 - `standalone.sh warn` needs `notify` and `RESURRECT_TPM_LINE` from the `.tmux` (one definition site). It sources the `.tmux` inside a subshell, so the sourced `main` and variables cannot clobber standalone.sh's own.
 
 **Gaps resolved minimally (spec or locked text silent; reviewer may overrule):**
@@ -128,7 +128,7 @@ Fixtures (plain `/etc/os-release` shapes, one per file):
 - `tests/fixtures/os-release.fedora`: `PRETTY_NAME="Fedora Linux 40"`, `ID=fedora`.
 
 Script requirements (`claude-resurrect.tmux`, `#!/usr/bin/env bash`, `chmod +x`):
-- Top of file, in order: `PLUGIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"` (never name it `CURRENT_DIR`, see Discrepancy D); source `"$PLUGIN_DIR/scripts/ledger.sh"`. (T3 adds the `hook-wrapper.sh` source line right after it.)
+- Top of file, in order: `PLUGIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"` (never name it `CURRENT_DIR`, see Discrepancy D); source `"$PLUGIN_DIR/scripts/ledger.sh"` (the only `source` line; it provides `sh_quote`).
 - Named constants, each defined once, one `NAME=value` per line: `TMUX_MIN_VERSION=3.2`, `RESURRECT_TPM_LINE="set -g @plugin 'tmux-plugins/tmux-resurrect'"`, `STANDALONE_HOOK_SLOT=100`, `HINT_MSG="claude-resurrect: no ledger yet; install the Claude Code half: /plugin install claude-resurrect@tmux-claude-resurrect"`.
 - `os_family <uname_s> <os_release_file>`: `Darwin` -> `macos`. Otherwise, in a subshell: `ID=; ID_LIKE=` (reset so ambient values cannot leak), source the file (missing or unreadable file -> `unknown`), then take the words of `"$ID $ID_LIKE"` (use `${ID_LIKE:-}`); any word in `debian|ubuntu` -> `debian`; else any word in `rhel|fedora|centos` -> `rhel`; else `unknown`. Echo the family.
 - `install_cmd <dep> <family>`: `jq`: macos `brew install jq`, debian `sudo apt install jq`, rhel `sudo dnf install jq`; `flock`: macos `brew install flock`, debian `sudo apt install util-linux`, rhel `sudo dnf install util-linux`; unknown family or any other dep -> empty output.
@@ -155,7 +155,7 @@ Run RED (both files FAIL), implement, GREEN, then run the full suite.
 
 ---
 
-## Task T2 — hook-wrapper.sh: sh_quote, run_chained, ours_script_for, main (U17 wrapper half)
+## Task T2 — hook-wrapper.sh: run_chained, ours_script_for, main (U17 wrapper half)
 
 **Files:**
 - Create: `scripts/hook-wrapper.sh`
@@ -170,22 +170,21 @@ Run RED (both files FAIL), implement, GREEN, then run the full suite.
 RED first: create the test file with the wrapper half below, run the scoped test, confirm FAIL (`scripts/hook-wrapper.sh` missing), then create the script until green. T3 later appends the `chain_hook` half to the same test file.
 
 Script requirements (`scripts/hook-wrapper.sh`, `#!/usr/bin/env bash`, `chmod +x`, no `set -e`):
-- `CURRENT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"`. It does not source `ledger.sh` (the wrapper must not depend on the ledger).
-- `sh_quote <string>`: POSIX single-quote quoting: wrap in `'...'`, each `'` becomes `'\''`. The empty string quotes to `''`.
+- `CURRENT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"`, then `source "$CURRENT_DIR/ledger.sh"` for `sh_quote` (defined only there, P3: POSIX single-quote quoting; this script does not define it).
 - `ours_script_for <kind>`: `post-save-layout` -> `"$CURRENT_DIR/save.sh"`, `post-restore-all` -> `"$CURRENT_DIR/restore.sh"`; any other kind -> no output, return 1.
 - `run_chained <prev> <ours_script> [args...]`: if `prev` is non-empty, build `quoted=" $(sh_quote a1) $(sh_quote a2) ..."` over the args and run `( eval "$prev$quoted" )` in a subshell (so an `exit` inside prev cannot skip ours; prev's exit status is ignored). Then `"$ours_script" "$@"`; the function returns ours' status.
 - `main <kind> [args...]`: `ours=$(ours_script_for "$kind") || return 1` (unknown kind: run nothing, return 1); `prev=$(tmux show -gqv "@claude-resurrect-prev-$kind" 2>/dev/null)`; `run_chained "$prev" "$ours" "$@"` with the args after `kind`.
 - End of file: `[[ "${BASH_SOURCE[0]}" == "$0" ]] && main "$@"`.
 
 Test harness inside `tests/unit/u17_hook_chaining.sh` (this task writes the whole file; T3 later adds a section):
-- Shared preamble. Source `"$REPO/scripts/hook-wrapper.sh"`.
+- Shared preamble. Source `"$REPO/scripts/hook-wrapper.sh"` (it sources `ledger.sh`, so `sh_quote` is in scope).
 - Constants: `PREV_NAME=prev`, `OURS_NAME=ours`, `OURS_EXIT=7`, `PREV_EXIT=3`, `ARG_SPACES="/tmp/dir with space/snap file.txt"`, `ARG_QUOTES="it's \$HOME"` (the `$` stays literal).
 - Recorder script factory `make_recorder <path> <name> [exit_code]` writes an executable script that appends one line `<name><TAB>arg1<TAB>arg2...` (built with `printf '%s'` and a loop over `"$@"`) to `$ROOT/calls.log` and exits with `exit_code` (default 0). Recorders live in `$ROOT/rec dir/` (a directory with a space) so quoting of prev is exercised. `calls.log` is deleted before each case. Expected lines are built with the same `printf` pattern in the test.
 - The process-level section (item 9) uses a real private server through the shim and runs last. Before it, state explicitly `export PATH="$REPO/tests/bin:$PATH"` (after `REAL_TMUX` is captured), so the copied wrapper's bare `tmux show -gqv` reaches `$CR_TEST_SOCKET` and not the user's default socket.
 
 Testplan [scenario][range][check]:
 
-1. [sh_quote round trip][strings: `plain`, `with space`, `it's`, `$HOME`, `a"b`, `back\slash`, `multi` + LF + `line` (no trailing newline), empty string, `*?[x]`][for each `s`: `r=$(eval "printf %s $(sh_quote "$s")")` equals `s` byte-exact (`[ "$r" = "$s" ]`); `assert_eq "''" "$(sh_quote '')"`; `assert_eq "'it'\\''s'" "$(sh_quote "it's")"`]
+1. [sh_quote round trip via the wrapper's sourced `ledger.sh` (regression check)][strings: `plain`, `with space`, `it's`, `$HOME`, `a"b`, `back\slash`, `multi` + LF + `line` (no trailing newline), empty string, `*?[x]`][for each `s`: `r=$(eval "printf %s $(sh_quote "$s")")` equals `s` byte-exact (`[ "$r" = "$s" ]`); `assert_eq "''" "$(sh_quote '')"`; `assert_eq "'it'\\''s'" "$(sh_quote "it's")"`]
 2. [run_chained, prev set, args with spaces and quote][prev = recorder `prev`, ours = recorder `ours`, args `"$ARG_SPACES"` and `"$ARG_QUOTES"`][`calls.log` is exactly two lines in this order: `prev<TAB>$ARG_SPACES<TAB>$ARG_QUOTES` then `ours<TAB>$ARG_SPACES<TAB>$ARG_QUOTES` (`assert_eq` on the whole file)]
 3. [run_chained, prev with its own leading argument][prev value = `$(sh_quote "$ROOT/rec dir/prev") --tag`, one arg `snap`][`calls.log` is `prev<TAB>--tag<TAB>snap` then `ours<TAB>snap`]
 4. [run_chained, empty prev][prev `""`, args `snap`][`calls.log` is exactly `ours<TAB>snap` (one line)]
@@ -193,7 +192,7 @@ Testplan [scenario][range][check]:
 6. [run_chained, prev fails][prev recorder exits `PREV_EXIT`; ours exits `OURS_EXIT`][`calls.log` has both lines (`prev` first); `run_chained` returned `OURS_EXIT`]
 7. [run_chained, prev calls exit in the eval][prev value = `exit $PREV_EXIT; echo` (never reaches a recorder); ours recorder][`calls.log` contains the `ours` line; the calling shell is still alive (the next assertion runs)]
 8. [ours_script_for][`post-save-layout`, `post-restore-all`, `bogus`, empty string][outputs `$CURRENT_DIR/save.sh` where the test reads `CURRENT_DIR` after sourcing (`assert_eq "$CURRENT_DIR/save.sh" ...`), `$CURRENT_DIR/restore.sh`, empty with rc 1, empty with rc 1]
-9. [wrapper main as a real process, tmux real][copy `scripts/hook-wrapper.sh` to `$ROOT/wrapdir/scripts/hook-wrapper.sh`; next to it write recorder scripts named `save.sh` and `restore.sh` (names `ours-save`, `ours-restore`); run `export PATH="$REPO/tests/bin:$PATH"` first (REAL_TMUX already captured by the preamble); start a zero-session server via the shim (`tmux start-server \; set -g exit-empty off \; set -g default-shell /bin/sh`); set `@claude-resurrect-prev-post-save-layout` to `$(sh_quote "$ROOT/rec dir/prev")`; run (a) `hook-wrapper.sh post-save-layout "$ARG_SPACES"`, (b) `hook-wrapper.sh post-restore-all snap` (prev option unset for this kind), (c) `hook-wrapper.sh bogus snap`][(a) `calls.log` is `prev<TAB>$ARG_SPACES` then `ours-save<TAB>$ARG_SPACES`, rc 0; (b) only `ours-restore<TAB>snap`, rc 0; (c) rc != 0 and `calls.log` unchanged (no line added)]
+9. [wrapper main as a real process, tmux real][copy `scripts/hook-wrapper.sh` and `scripts/ledger.sh` to `$ROOT/wrapdir/scripts/`; next to them write recorder scripts named `save.sh` and `restore.sh` (names `ours-save`, `ours-restore`); run `export PATH="$REPO/tests/bin:$PATH"` first (REAL_TMUX already captured by the preamble); start a zero-session server via the shim (`tmux start-server \; set -g exit-empty off \; set -g default-shell /bin/sh`); set `@claude-resurrect-prev-post-save-layout` to `$(sh_quote "$ROOT/rec dir/prev")`; run (a) `hook-wrapper.sh post-save-layout "$ARG_SPACES"`, (b) `hook-wrapper.sh post-restore-all snap` (prev option unset for this kind), (c) `hook-wrapper.sh bogus snap`][(a) `calls.log` is `prev<TAB>$ARG_SPACES` then `ours-save<TAB>$ARG_SPACES`, rc 0; (b) only `ours-restore<TAB>snap`, rc 0; (c) rc != 0 and `calls.log` unchanged (no line added)]
 
 Run RED, implement, GREEN, then the full suite.
 
@@ -211,12 +210,12 @@ Run RED, implement, GREEN, then the full suite.
 
 **What:**
 
-Prerequisite state (restated): from T1, `claude-resurrect.tmux` sets `PLUGIN_DIR`, sources `scripts/ledger.sh`, defines the constants and `os_family`, `install_cmd`, `dep_message`, `tmux_old_message`, `tmux_version_ok`, `notify`, and ends with the guarded `main` call (the only `main` in scope is hook-wrapper.sh's (sourced); T5 defines the entry's main after all source lines so it overrides it). From T2, `scripts/hook-wrapper.sh` defines `sh_quote <s>` (POSIX single-quote quoting), `ours_script_for`, `run_chained`, and a guarded `main`; `tests/unit/u17_hook_chaining.sh` exists with the wrapper half (sections 1-9) and the shared preamble.
+Prerequisite state (restated): from T1, `claude-resurrect.tmux` sets `PLUGIN_DIR`, sources `scripts/ledger.sh`, defines the constants and `os_family`, `install_cmd`, `dep_message`, `tmux_old_message`, `tmux_version_ok`, `notify`, and ends with the guarded `main` call (the entry has no `main` until T5). `sh_quote` comes from `ledger.sh` (P3). From T2, `scripts/hook-wrapper.sh` sources `ledger.sh` and defines `ours_script_for`, `run_chained`, and a guarded `main`; `tests/unit/u17_hook_chaining.sh` exists with the wrapper half (sections 1-9) and the shared preamble.
 
 RED first: add the chaining section below to the test file, run the scoped test, confirm the new section FAILS (`chain_hook: command not found`) while the wrapper half stays green, then edit the entry.
 
 Script changes (`claude-resurrect.tmux`):
-- Right after the `ledger.sh` source line, source `"$PLUGIN_DIR/scripts/hook-wrapper.sh"` for `sh_quote`. All `source` lines stay above the `main` definition (T5) so the entry's `main` wins over the wrapper's (Discrepancy D).
+- No new `source` line: `sh_quote` is already in scope from `ledger.sh`. The entry never sources `hook-wrapper.sh`; it only needs its path.
 - `wrapper_cmd <kind>`: echo `$(sh_quote "$PLUGIN_DIR/scripts/hook-wrapper.sh") <kind>`.
 - `chain_hook <kind> <wrapper_cmd>`: `cur=$(tmux show -gqv "@resurrect-hook-$kind")`. If `cur == wrapper_cmd`: return 0 without any tmux write. Otherwise, if `cur` is non-empty: `tmux set -g "@claude-resurrect-prev-$kind" "$cur"`. Then `tmux set -g "@resurrect-hook-$kind" "$wrapper_cmd"`. No string joining of the two values anywhere.
 
@@ -290,11 +289,11 @@ Run RED (items 1-8 fail, 9 passes only after both edits), implement the gate, ob
 
 **What:**
 
-Prerequisite state (restated): `claude-resurrect.tmux` defines `PLUGIN_DIR`, `TMUX_MIN_VERSION`, `RESURRECT_TPM_LINE`, `STANDALONE_HOOK_SLOT`, `HINT_MSG`, `os_family`, `install_cmd`, `dep_message`, `tmux_old_message`, `tmux_version_ok`, `notify`, `wrapper_cmd <kind>`, `chain_hook <kind> <wrapper_cmd>` (moves a non-empty, non-wrapper `@resurrect-hook-<kind>` to `@claude-resurrect-prev-<kind>`, then sets the hook to the wrapper), sources `scripts/ledger.sh` and `scripts/hook-wrapper.sh`, and ends with a guarded `main "$@"` call; the only `main` in scope is hook-wrapper.sh's (sourced); T5 defines the entry's main after all source lines so it overrides it. `scripts/standalone.sh` has `warn` (logs `claude-resurrect: tmux-resurrect recommended for exact layout: <RESURRECT_TPM_LINE>` through `notify` in standalone mode only).
+Prerequisite state (restated): `claude-resurrect.tmux` defines `PLUGIN_DIR`, `TMUX_MIN_VERSION`, `RESURRECT_TPM_LINE`, `STANDALONE_HOOK_SLOT`, `HINT_MSG`, `os_family`, `install_cmd`, `dep_message`, `tmux_old_message`, `tmux_version_ok`, `notify`, `wrapper_cmd <kind>`, `chain_hook <kind> <wrapper_cmd>` (moves a non-empty, non-wrapper `@resurrect-hook-<kind>` to `@claude-resurrect-prev-<kind>`, then sets the hook to the wrapper), sources only `scripts/ledger.sh`, and ends with a guarded `main "$@"` call; the entry has no `main` yet. `scripts/standalone.sh` has `warn` (logs `claude-resurrect: tmux-resurrect recommended for exact layout: <RESURRECT_TPM_LINE>` through `notify` in standalone mode only).
 
-RED first: create `i16_dep_check.sh`, run the scoped test, confirm FAIL: the entry runs hook-wrapper's main, so nothing is logged or registered, then add `main` until green.
+RED first: create `i16_dep_check.sh`, run the scoped test, confirm FAIL: the entry has no `main` (`main: command not found` or equivalent), so nothing is logged or registered, then add `main` until green.
 
-Script changes: define `main` after all `source` lines and before the guard, doing, in order:
+Script changes: define `main` before the guard, doing, in order:
 1. `family=$(os_family "$(uname -s)" "${OS_RELEASE_FILE:-/etc/os-release}")`; `ok=1`. For `dep` in `jq flock`: `command -v "$dep" >/dev/null 2>&1 || { notify "$(dep_message "$dep" "$family")"; ok=0; }`. `ver=$(tmux -V 2>/dev/null)`; `tmux_version_ok "$ver" || { notify "$(tmux_old_message "${ver#tmux }" "$family")"; ok=0; }`. If `ok` is 0: `return 0` (nothing registered, spec:84-85).
 2. `chain_hook post-save-layout "$(wrapper_cmd post-save-layout)"` and the same for `post-restore-all`.
 3. Not in this task: T6 inserts the one-shot session-created hook here, between steps 2 and 4.
@@ -363,10 +362,10 @@ Run RED, implement, GREEN, then the full suite, then the phase CHECK: `bash test
 
 ## Self-Review
 
-**Spec coverage.** U15 -> T1 (items 1-6); U16 -> T1 (items 7-8); U17 -> T2 (wrapper) + T3 (chaining); U18 -> T4; I14 (spec:246) -> T6; I16 (spec:248) -> T5. Locked decisions: `os_family`/`install_cmd`/`dep_message`/`tmux_old_message`/`tmux_version_ok`/`notify` -> T1; `sh_quote`/`run_chained`/wrapper `main` -> T2; `chain_hook`/`wrapper_cmd` -> T3; `detect_mode`/gate/`warn` -> T4; `main` steps 1, 2, 4, 5 -> T5; step 3 -> T6.
+**Spec coverage.** U15 -> T1 (items 1-6); U16 -> T1 (items 7-8); U17 -> T2 (wrapper) + T3 (chaining); U18 -> T4; I14 (spec:246) -> T6; I16 (spec:248) -> T5. Locked decisions: `os_family`/`install_cmd`/`dep_message`/`tmux_old_message`/`tmux_version_ok`/`notify` -> T1; `run_chained`/wrapper `main` -> T2 (`sh_quote` lives in `ledger.sh`, P3); `chain_hook`/`wrapper_cmd` -> T3; `detect_mode`/gate/`warn` -> T4; `main` steps 1, 2, 4, 5 -> T5; step 3 -> T6.
 
 **Placeholder scan.** No TBD. T5 step 3 is explicitly "added by T6", with T6 stating the exact insertion point.
 
-**Consistency.** Names used across tasks: `PLUGIN_DIR`, `STANDALONE_HOOK_SLOT`, `TMUX_MIN_VERSION`, `RESURRECT_TPM_LINE`, `HINT_MSG`, `sh_quote`, `wrapper_cmd`, `chain_hook`, `detect_mode`, `current_mode`, `warn_recommended`, `@claude-resurrect-prev-<kind>`, `@claude-resurrect-hinted`.
+**Consistency.** Names used across tasks: `PLUGIN_DIR`, `STANDALONE_HOOK_SLOT`, `TMUX_MIN_VERSION`, `RESURRECT_TPM_LINE`, `HINT_MSG`, `sh_quote` (defined only in `scripts/ledger.sh`), `wrapper_cmd`, `chain_hook`, `detect_mode`, `current_mode`, `warn_recommended`, `@claude-resurrect-prev-<kind>`, `@claude-resurrect-hinted`.
 
 **Ordering.** Dependency edges: T1 none; T2 none; T3 <- T1, T2; T4 <- T1; T5 <- T3, T4; T6 <- T5. Parallel groups: {T1, T2} start together; T4 runs alongside T3 (file-disjoint: `scripts/standalone.sh` + u18 + i13 vs `claude-resurrect.tmux` + u17); T5 and T6 are strictly sequential (same entry file).
