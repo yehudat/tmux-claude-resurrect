@@ -471,8 +471,8 @@ claude-resurrect.tmux (executable bash; sources scripts/ledger.sh):
   - otherwise source ID and ID_LIKE from the file in a subshell: a word in debian|ubuntu -> debian; a word in rhel|fedora|centos -> rhel; anything else -> unknown.
   - main passes $(uname -s) and ${OS_RELEASE_FILE:-/etc/os-release}.
 - install_cmd <dep> <family>: the commands from the spec dependency table (spec:77-79). jq on macos
-  gives 'brew install jq'; flock on macos gives 'brew install flock', on debian 'sudo apt install
-  util-linux', on rhel 'sudo dnf install util-linux'; unknown -> ''.
+        gives 'brew install jq'; flock on macos gives 'brew install flock', on debian 'sudo apt install
+        util-linux', on rhel 'sudo dnf install util-linux'; unknown -> ''.
 - dep_message <dep> <family>: 'claude-resurrect: missing <dep>: <cmd>'.
 - tmux_old_message <ver> <family>: 'tmux >= <TMUX_MIN_VERSION> required, found <ver>: <cmd>', where
   cmd is 'brew upgrade tmux' (macos), 'sudo apt install tmux' (debian) or 'sudo dnf install tmux'
@@ -791,8 +791,8 @@ plans:
         - otherwise source ID and ID_LIKE from the file in a subshell: a word in debian|ubuntu -> debian; a word in rhel|fedora|centos -> rhel; anything else -> unknown.
         - main passes $(uname -s) and ${OS_RELEASE_FILE:-/etc/os-release}.
       - install_cmd <dep> <family>: the commands from the spec dependency table (spec:77-79). jq on macos
-  gives 'brew install jq'; flock on macos gives 'brew install flock', on debian 'sudo apt install
-  util-linux', on rhel 'sudo dnf install util-linux'; unknown -> ''.
+        gives 'brew install jq'; flock on macos gives 'brew install flock', on debian 'sudo apt install
+        util-linux', on rhel 'sudo dnf install util-linux'; unknown -> ''.
       - dep_message <dep> <family>: 'claude-resurrect: missing <dep>: <cmd>'.
       - tmux_old_message <ver> <family>: 'tmux >= <TMUX_MIN_VERSION> required, found <ver>: <cmd>',
         where cmd is 'brew upgrade tmux' (macos), 'sudo apt install tmux' (debian) or 'sudo dnf
@@ -818,8 +818,8 @@ plans:
         post-restore-all.
       - main, in order:
         1. Dep check (jq, flock via command -v; tmux version). On any failure: notify for each missing dep
-     (dep_message) and for an old tmux (tmux_old_message), and return without registering anything
-     (spec:84-85).
+           (dep_message) and for an old tmux (tmux_old_message), and return without registering anything
+           (spec:84-85).
         2. chain_hook for both kinds (post-save-layout, post-restore-all). This is done synchronously, since setting the options is harmless without resurrect.
         3. If `tmux list-sessions -F '#{session_id}' 2>/dev/null | wc -l` == 0: set-hook -g "session-created[$STANDALONE_HOOK_SLOT]" with a command that first unsets that same indexed slot, then runs `run-shell -b "'<dir>/scripts/standalone.sh' restore '#{hook_session_name}'"`. Using an indexed slot means the user's own session-created hooks are untouched.
         4. If the ledger file is absent and server option @claude-resurrect-hinted is unset: notify the hint and set @claude-resurrect-hinted 1. This makes the hint one-time per server.
@@ -827,10 +827,10 @@ plans:
 
       standalone.sh additions:
       - detect_mode <list-keys output> <plugin_dir> echoes resurrect iff a `tmux list-keys` binding runs
-  `tmux-resurrect/scripts/save.sh` (any path), else iff <plugin_dir>tmux-resurrect/scripts/save.sh
-  exists (plugin_dir has a trailing slash); otherwise standalone (U18, spec §6). It does not read
-  @resurrect-save. main passes $(tmux list-keys) and
-  ${TMUX_PLUGIN_MANAGER_PATH:-$HOME/.tmux/plugins/}.
+        `tmux-resurrect/scripts/save.sh` (any path), else iff <plugin_dir>tmux-resurrect/scripts/save.sh
+        exists (plugin_dir has a trailing slash); otherwise standalone (U18, spec §6). It does not read
+        @resurrect-save. main passes $(tmux list-keys) and
+        ${TMUX_PLUGIN_MANAGER_PATH:-$HOME/.tmux/plugins/}.
       - `restore` returns immediately when detect_mode == resurrect. This evaluation happens at hook-fire time, inside run-shell -b, so plugin order is irrelevant.
       - `warn`: in standalone mode, notify 'claude-resurrect: tmux-resurrect recommended for exact layout: <RESURRECT_TPM_LINE>'.
     check: |
