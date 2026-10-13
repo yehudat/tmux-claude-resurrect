@@ -97,19 +97,39 @@ ledger_with_lock() {
   ( flock -w "$LOCK_WAIT_S" 9 || { ledger_log "lock timeout"; exit 1; }; "$@" ) 9>"$(ledger_lock_path)"
 }
 
+prune_keep() {
+  local status=$1 row_server=$2 updated=$3 cur=$4 now=$5 ttl_days=$6
+  [[ "$status" == "$STATUS_HANDLED" ]] && return 1
+  [[ "$row_server" == "$cur" ]] && return 0
+  # age == TTL is kept: spec says "older than"
+  (( now - updated <= 10#$ttl_days * SECONDS_PER_DAY ))
+}
+
+ledger_ttl_days() {
+  local v
+  v=$(tmux show-option -gqv @claude-resurrect-ttl-days 2>/dev/null) || v=""
+  if [[ "$v" =~ ^[0-9]+$ ]]; then
+    echo "$((10#$v))"
+  else
+    echo "$TTL_DAYS_DEFAULT"
+  fi
+}
+
 _ledger_upsert_locked() {
+  local ttl=$7
   {
     local line
     ledger_read | while IFS= read -r line; do
       ledger_split "$line"
       [[ $R_SID == "$3" || ( $R_SERVER == "$1" && $R_PANE == "$2" ) ]] && continue
+      prune_keep "$R_STATUS" "$R_SERVER" "$R_UPDATED" "$1" "$6" "$ttl" || continue
       printf '%s\n' "$line"
     done
     printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$STATUS_LIVE"
   } | ledger_rewrite
 }
 
-ledger_upsert() { ledger_with_lock _ledger_upsert_locked "$@"; }
+ledger_upsert() { ledger_with_lock _ledger_upsert_locked "$@" "$(ledger_ttl_days)"; }
 
 _ledger_remove_sid_locked() {
   local line
@@ -121,6 +141,28 @@ _ledger_remove_sid_locked() {
 }
 
 ledger_remove_sid() { ledger_with_lock _ledger_remove_sid_locked "$1"; }
+
+_ledger_mark_handled_locked() {
+  local cur=$1 line sid
+  shift
+  ledger_read | while IFS= read -r line; do
+    ledger_split "$line"
+    # server_start filter: a resumed Claude's WRITE may beat this mark (startup ~1 s)
+    if [[ $R_SERVER != "$cur" ]]; then
+      for sid in "$@"; do
+        [[ $R_SID == "$sid" ]] && { R_STATUS=$STATUS_HANDLED; break; }
+      done
+    fi
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$R_SERVER" "$R_PANE" "$R_SID" "$R_TITLE" "$R_CWD" "$R_UPDATED" "$R_STATUS"
+  done | ledger_rewrite
+}
+
+ledger_mark_handled() {
+  local cur=$1
+  shift
+  [[ $# -eq 0 ]] && return 0
+  ledger_with_lock _ledger_mark_handled_locked "$cur" "$@"
+}
 
 split_tsv() {
   local n=$1 rest=$2 i f
