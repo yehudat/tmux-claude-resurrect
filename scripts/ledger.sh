@@ -6,6 +6,8 @@ LEDGER_FIELDS=7
 STATUS_LIVE=live
 STATUS_HANDLED=handled
 LEDGER_BS='\'
+CLAUDE_LINE_TAG=claude
+CLAUDE_LINE_FIELDS=7
 
 ledger_encode() {
   local s=$1
@@ -129,4 +131,19 @@ split_tsv() {
   done
   [[ $rest != *$'\t'* ]] || return 1
   printf -v "F_$n" '%s' "$rest"
+}
+
+claude_line_format() {
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$CLAUDE_LINE_TAG" "$(ledger_encode "$1")" "$2" "$3" "$4" "$5" "$6"
+}
+
+claude_line_split() {
+  split_tsv "$CLAUDE_LINE_FIELDS" "$1" || return 1
+  [[ $F_1 == "$CLAUDE_LINE_TAG" ]] || return 1
+  C_SESSION=$F_2 C_WINDOW=$F_3 C_PANE=$F_4 C_SID=$F_5 C_TITLE=$F_6 C_CWD=$F_7
+}
+
+sh_quote() {
+  local q="'\\''"
+  printf "'%s'" "${1//\'/$q}"
 }
