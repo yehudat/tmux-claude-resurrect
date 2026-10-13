@@ -69,3 +69,44 @@ test_server_stop() {
   [ -n "${REAL_TMUX:-}" ] && [ -n "${CR_TEST_SOCKET:-}" ] && _tt kill-server 2>/dev/null
   return 0
 }
+
+# SETTLE_S bounds how long a negative check waits for a send-keys that must not happen
+POLL_TIMEOUT_S=10
+POLL_INTERVAL_S=0.1
+SETTLE_S=1
+
+wait_for_lines() {
+  local file=$1 n=$2 start
+  start=$(date +%s)
+  while ((  $(date +%s) - start < POLL_TIMEOUT_S )); do
+    [[ -f $file ]] && (( $(wc -l < "$file") >= n )) && return 0
+    sleep "$POLL_INTERVAL_S"
+  done
+  return 1
+}
+
+settle() { sleep "$SETTLE_S"; }
+
+wait_pane_cmd() {
+  local start
+  start=$(date +%s)
+  while ((  $(date +%s) - start < POLL_TIMEOUT_S )); do
+    [[ $(tmux display -p -t "$1" '#{pane_current_command}' 2>/dev/null) == "$2" ]] && return 0
+    sleep "$POLL_INTERVAL_S"
+  done
+  return 1
+}
+
+mk_sleep_claude_dir() {
+  local d="$HOME/sleepbin"
+  mkdir -p "$d" || return 1
+  # a copy named claude makes pane_current_command read claude without a real Claude
+  cp "$(command -v sleep)" "$d/claude" && chmod +x "$d/claude" || return 1
+  # macOS kills a copied system binary until it is re-signed ad hoc
+  if command -v codesign > /dev/null; then
+    codesign --remove-signature "$d/claude" 2> /dev/null
+    codesign -s - "$d/claude" 2> /dev/null
+  fi
+  "$d/claude" 0 || return 1
+  echo "$d"
+}
