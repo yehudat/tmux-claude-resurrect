@@ -1,0 +1,5 @@
+{
+  "name": "claude-resurrect",
+  "version": "0.1.0",
+  "description": "Records each Claude Code session in a tmux pane so tmux-claude-resurrect can resume it after the tmux server dies"
+}

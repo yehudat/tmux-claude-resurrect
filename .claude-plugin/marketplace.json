@@ -1,0 +1,11 @@
+{
+  "name": "tmux-claude-resurrect",
+  "owner": { "name": "yehudat" },
+  "plugins": [
+    {
+      "name": "claude-resurrect",
+      "source": "./",
+      "description": "Claude half of tmux-claude-resurrect: hooks that keep the session ledger"
+    }
+  ]
+}
