@@ -119,3 +119,14 @@ _ledger_remove_sid_locked() {
 }
 
 ledger_remove_sid() { ledger_with_lock _ledger_remove_sid_locked "$1"; }
+
+split_tsv() {
+  local n=$1 rest=$2 i f
+  for ((i = 1; i < n; i++)); do
+    [[ $rest == *$'\t'* ]] || return 1
+    f=${rest%%$'\t'*}; rest=${rest#*$'\t'}
+    printf -v "F_$i" '%s' "$f"
+  done
+  [[ $rest != *$'\t'* ]] || return 1
+  printf -v "F_$n" '%s' "$rest"
+}
