@@ -60,6 +60,7 @@ tmux-claude-resurrect/
 │   ├── claude-hook.sh           # Claude hook entry: SessionStart -> WRITE, SessionEnd -> CLEAR
 │   ├── save.sh                  # resurrect post-save-layout: ledger -> claude lines
 │   ├── restore.sh               # resurrect post-restore-all: claude lines -> guarded resume
+│   ├── hook-wrapper.sh          # runs the user's previous resurrect hook, then ours (§6)
 │   └── standalone.sh            # no resurrect: dead-server rows -> new window
 ├── .claude-plugin/plugin.json
 ├── .claude-plugin/marketplace.json
@@ -75,13 +76,15 @@ tmux-claude-resurrect/
 |---|---|---|---|---|
 | tmux ≥ 3.2 | required | `brew install tmux` | `sudo apt install tmux` | `sudo dnf install tmux` |
 | jq | required | ships at `/usr/bin/jq`; else `brew install jq` | `sudo apt install jq` | `sudo dnf install jq` |
-| flock | required | `brew install flock` | `util-linux` (preinstalled) | `util-linux` (preinstalled) |
+| flock | required | `brew install flock` | `sudo apt install util-linux` | `sudo dnf install util-linux` |
 | tmux-resurrect | recommended | TPM line above | same | same |
 
 Load-time check in `claude-resurrect.tmux`:
 
 - Required dep missing: `display-message` error naming the dep and the exact install command for
   the detected OS (`uname`, `/etc/os-release` `ID`/`ID_LIKE`); register nothing.
+- tmux too old: `tmux >= <min> required, found <ver>:` plus the OS command (`brew upgrade tmux`,
+  `sudo apt install tmux`, `sudo dnf install tmux`); register nothing.
 - Resurrect missing: warning only (`recommended for exact layout: <TPM line>`); continue in
   standalone mode.
 - Ledger file absent at load: one-time hint that the Claude half may not be installed.
@@ -98,12 +101,12 @@ Path: `${XDG_STATE_HOME:-$HOME/.local/state}/claude-resurrect/ledger.tsv`; error
 `ledger.log` beside it.
 
 Row columns, TAB-separated: `server_start`, `pane_id`, `session_id`, `title`, `cwd`, `updated`
-(epoch seconds), `status` (`live` | `handled`). `title` and `cwd` are encoded so TAB, newline and
-backslash survive (backslash escapes); everything else is passed through, including unicode.
+(epoch seconds), `status` (`live` | `handled`). `title` and `cwd` are encoded so TAB, newline, CR
+and backslash survive (backslash escapes); everything else is passed through, including unicode.
 
 Concurrency: every read-modify-write holds `flock` on `ledger.lock`, waiting at most
-`LOCK_WAIT_S=1` (below `SessionEnd`'s 1.5 s hook timeout); the new content goes to a temp file in the same dir and is `mv`'d over the ledger.
-On timeout the operation is skipped and logged.
+`LOCK_WAIT_S=1` (below `SessionEnd`'s 1.5 s hook timeout); the new content goes to a temp file in
+the same dir and is `mv`'d over the ledger. On timeout the operation is skipped and logged.
 
 ## 5. Data flow
 
@@ -126,8 +129,8 @@ reason (`clear`, `resume`, `other`, unknown) leaves the ledger alone.
 ### 5.3 Save — resurrect `post-save-layout` (argument: snapshot path)
 
 For each live row of the current `server_start`: resolve coords via `tmux display -p -t <pane_id>
-'#{session_name}\t#{window_index}\t#{pane_index}'`; skip if the pane is gone; append a claude line
-to the snapshot. Runs before resurrect's dedup, so a ledger change makes the snapshot differ and
+'#{session_name}<TAB>#{window_index}<TAB>#{pane_index}'` (literal TAB characters); skip if the pane is
+gone; append a claude line to the snapshot. Runs before resurrect's dedup, so a ledger change makes the snapshot differ and
 `last` advances; an unchanged ledger keeps dedup working.
 
 ### 5.4 Restore — resurrect `post-restore-all`
@@ -162,12 +165,17 @@ Drop `handled` rows and dead-server rows with `updated` older than `@claude-resu
 
 ## 6. tmux integration
 
-- Mode detect: resurrect is present iff `@resurrect-save` is set or
-  `~/.tmux/plugins/tmux-resurrect/scripts/save.sh` exists, evaluated in a deferred `run-shell -b`
-  so TPM plugin order does not matter.
-- Hook chaining: if the user already set `@resurrect-hook-post-save-layout` /
-  `@resurrect-hook-post-restore-all`, append ours (`<theirs>; <ours>`); skip if ours is already
-  present, so re-sourcing never duplicates.
+- Mode detect: resurrect is present iff `tmux list-keys` has a binding running
+  `tmux-resurrect/scripts/save.sh` (any install path), else iff
+  `${TMUX_PLUGIN_MANAGER_PATH:-~/.tmux/plugins/}tmux-resurrect/scripts/save.sh` exists. Resurrect
+  never sets `@resurrect-save` itself. Evaluated in a deferred `run-shell -b` so TPM plugin order
+  does not matter.
+- Hook chaining: resurrect runs `eval "$hook $args"`, so string chaining (`<theirs>; <ours>`) would
+  pass the snapshot path to ours only. Instead, a user value already in
+  `@resurrect-hook-post-save-layout` / `@resurrect-hook-post-restore-all` is moved to
+  `@claude-resurrect-prev-<kind>`, and the hook is set to our wrapper, which runs the previous hook
+  with the same args first, then ours. If the hook already points at our wrapper, nothing changes,
+  so re-sourcing never duplicates.
 
 ## 7. Error handling
 
@@ -201,7 +209,7 @@ panes run a copy of `sleep` named `claude`.
 ```
 U1. [row encode/decode][title/cwd with TAB, newline, spaces, quotes, unicode (✳, 󰀵)][decode(encode(r)) == r]
 U2. [ledger read][empty, missing file, missing dir, trailing newline, malformed row][missing -> empty set; malformed row skipped + logged]
-U3. [atomic rewrite][kill writer mid-write (tmp file left)][ledger is either old or new, never partial]
+U3. [atomic rewrite][killed writer simulated: partial tmp file left][ledger is either old or new, never partial]
 U4. [lock][free / held < LOCK_WAIT_S / held > LOCK_WAIT_S][acquire ok / waits / non-zero ≤ LOCK_WAIT_S+ε]
 U5. [upsert key][same (server,pane) / same sid / neither][replace / replace / append]
 U6. [clear predicate][every documented reason + unknown string][true only for prompt_input_exit, logout]
@@ -213,10 +221,10 @@ U11. [send-keys command build][cwd with spaces, quotes, $, ~; sid uuid][string t
 U12. [crash-date][rows with mixed `updated`, single row, same-day][date of max(updated), YYYY-MM-DD]
 U13. [window name collision][claude-resurrect-<date> exists, -2 exists][-2, -3]
 U14. [prune predicate][handled, dead < ttl, dead == ttl, dead > ttl, live][drop / keep / keep / drop / keep]
-U15. [dep check][Darwin, Debian, RHEL (os-release fixtures) × missing jq/flock/old tmux][message names exact cmd per OS]
+U15. [dep check][Darwin, Debian, RHEL (os-release fixtures) × missing jq/flock, tmux below min][message names exact install/upgrade cmd per OS]
 U16. [tmux version gate][3.1, 3.2, 3.4, "next-3.5", "openbsd-7.4"][parse + compare correct]
-U17. [hook chaining][user hook unset / set / already contains ours][ours appended once; re-source does not duplicate]
-U18. [mode detect][resurrect present / absent][resurrect mode / standalone mode]
+U17. [hook chaining][user hook unset / set / already our wrapper][wrapper set once; prev hook gets same args; re-source no dup]
+U18. [mode detect][resurrect binding / custom TPM path / absent][resurrect / resurrect / standalone]
 ```
 
 ### Integration and end-to-end (real tmux on a private socket)
@@ -230,15 +238,15 @@ I5. [no CLEAR][reason ∈ {other, clear, resume}][row kept]
 I6. [concurrency][8 parallel WRITEs on distinct panes][8 rows, file well-formed]
 I7. [lock timeout][lock held > LOCK_WAIT_S][hook exits 0 within LOCK_WAIT_S+ε, ledger.log has entry]
 I8. [save][3 live rows, 1 dead-pane row, 1 old-server row][snapshot gains exactly 3 claude lines with correct coords]
-I9. [save dedup][save twice, ledger unchanged][one snapshot kept; ledger change -> new snapshot]
+I9. [save idempotent][save twice, ledger unchanged][identical claude lines both times (dedup itself checked in I17)]
 I10. [restore][3 claude lines, panes at zsh][stub called 3x with --resume <sid>, cwd matches]
 I11. [restore guard][pane running "claude" / sid live in current server][stub not called for that entry]
 I12. [restore idempotent][run restore twice][stub calls == number of entries]
 I13. [standalone restore][no resurrect, 3 dead-server rows][window claude-resurrect-<crash-date>, 3 panes, rows -> handled]
-I14. [standalone re-source][source plugin again][no new window, stub calls unchanged]
+I14. [standalone re-source][exit-empty off; source plugin again][no new window, stub calls unchanged]
 I15. [prune][handled rows, dead rows older/younger than ttl][only fresh dead rows + live rows remain]
-I16. [dep check][jq/flock/tmux masked via PATH; resurrect absent][error lists exact install cmd; resurrect -> warning only]
-I17. [real resurrect e2e][tmux-resurrect at pinned commit: save -> kill-server -> restore][stub resumes each sid at original coords]
+I16. [dep check][jq/flock masked via PATH, `tmux -V` shim; resurrect absent][error lists exact install cmd; resurrect -> warning only]
+I17. [real resurrect e2e][tmux-resurrect at pinned commit: save -> kill-server -> restore][stub resumes each sid at original coords; unchanged ledger -> one snapshot]
 ```
 
 ### Build order (each step = RED → GREEN → commit)
