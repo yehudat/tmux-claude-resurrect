@@ -34,7 +34,9 @@ resurrect_dir() {
     fi
     return 0
   fi
-  echo "$raw" | sed "s,\$HOME,$HOME,g; s,\$HOSTNAME,$(hostname),g; s,\~,$HOME,g"
+  # tmux 3.4 show-option escapes $ as \$; strip it so the expansion below matches
+  echo "$raw" | sed 's,\\\$,$,g' \
+    | sed "s,\$HOME,$HOME,g; s,\$HOSTNAME,$(hostname),g; s,\~,$HOME,g"
 }
 
 sid_live_in_server() {
