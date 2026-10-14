@@ -72,12 +72,35 @@ cmd_restore() {
   ledger_mark_handled "$cur" "${sids[@]}"
 }
 
+RESURRECT_SAVE_SUFFIX=tmux-resurrect/scripts/save.sh
+
+detect_mode() {
+  if [[ $1 == *"$RESURRECT_SAVE_SUFFIX"* || -e "$2$RESURRECT_SAVE_SUFFIX" ]]; then
+    echo resurrect
+  else
+    echo standalone
+  fi
+}
+
+current_mode() {
+  detect_mode "$(tmux list-keys 2>/dev/null)" "${TMUX_PLUGIN_MANAGER_PATH:-$HOME/.tmux/plugins/}"
+}
+
+warn_recommended() {
+  [[ $(current_mode) == standalone ]] || return 0
+  # subshell: the sourced entry defines its own main and variables
+  ( . "$CURRENT_DIR/../claude-resurrect.tmux"
+    notify "claude-resurrect: tmux-resurrect recommended for exact layout: $RESURRECT_TPM_LINE" )
+}
+
 main() {
-  local usage="usage: standalone.sh restore <session>"
+  local usage="usage: standalone.sh restore <session> | warn"
   case "${1:-}" in
     restore)
       [[ -n ${2:-} ]] || { echo "$usage" >&2; return 2; }
+      [[ $(current_mode) == resurrect ]] && return 0
       shift; cmd_restore "$@" ;;
+    warn) warn_recommended ;;
     *) echo "$usage" >&2; return 2 ;;
   esac
 }

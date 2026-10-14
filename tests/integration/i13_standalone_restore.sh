@@ -4,6 +4,7 @@ source "$REPO/tests/lib.sh"
 unset TMUX TMUX_PANE
 export TZ=UTC
 mk_test_root
+unset TMUX_PLUGIN_MANAGER_PATH
 source "$REPO/scripts/ledger.sh"
 
 CUR=200
