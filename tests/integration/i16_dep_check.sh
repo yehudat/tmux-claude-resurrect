@@ -10,7 +10,7 @@ mkdir -p "$HOME"
 ORIG_PATH=$PATH
 export PATH="$REPO/tests/bin:$REPO/tests/stubs:$PATH"
 export CLAUDE_STUB_LOG="$ROOT/stub.log"
-trap '"$REAL_TMUX" -L "$CR_TEST_SOCKET" kill-server 2>/dev/null; rm -rf "$ROOT"' EXIT
+trap 'test_server_stop; rm -rf "$ROOT"' EXIT
 
 source "$REPO/claude-resurrect.tmux"
 source "$REPO/scripts/ledger.sh"

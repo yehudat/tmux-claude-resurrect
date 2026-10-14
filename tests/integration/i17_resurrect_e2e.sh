@@ -49,7 +49,7 @@ export CR_TEST_SOCKET="${CR_TEST_SOCKET:-crt-$$-$RANDOM}"
 export SHELL=/bin/sh
 export PATH="$REPO/tests/bin:$REPO/tests/stubs:$PATH"
 unset TMUX TMUX_PANE
-trap 'tmux kill-server 2>/dev/null; rm -rf "$TEST_ROOT"' EXIT
+trap 'test_server_stop; rm -rf "$TEST_ROOT"' EXIT
 
 LAST_SAVE_END=
 

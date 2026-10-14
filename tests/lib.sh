@@ -66,7 +66,13 @@ hook_json() {
 }
 
 test_server_stop() {
-  [ -n "${REAL_TMUX:-}" ] && [ -n "${CR_TEST_SOCKET:-}" ] && _tt kill-server 2>/dev/null
+  local sock
+  [ -n "${REAL_TMUX:-}" ] && [ -n "${CR_TEST_SOCKET:-}" ] || return 0
+  # Derived, not queried: tests that already killed their server can't answer display
+  sock="${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/$CR_TEST_SOCKET"
+  _tt kill-server 2>/dev/null
+  # tmux leaves the socket file behind after kill-server; one per test run piles up in /tmp
+  [ -S "$sock" ] && rm "$sock"
   return 0
 }
 

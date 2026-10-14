@@ -7,7 +7,7 @@ unset TMUX_PLUGIN_MANAGER_PATH
 ROOT=$(mktemp -d)
 export HOME="$ROOT/home" XDG_STATE_HOME="$ROOT/state" CR_TEST_SOCKET="crt-$$-$RANDOM"
 mkdir -p "$HOME"
-trap '"$REAL_TMUX" -L "$CR_TEST_SOCKET" kill-server 2>/dev/null; rm -rf "$ROOT"' EXIT
+trap 'test_server_stop; rm -rf "$ROOT"' EXIT
 . "$REPO/scripts/hook-wrapper.sh"
 
 PREV_NAME=prev
